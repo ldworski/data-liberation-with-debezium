@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: order-service
+  main:
+    web-application-type: none
+    banner-mode: off
+  datasource:
+    url: jdbc:postgresql://localhost:5432/app
+    username: app
+    password: app
+
+order-generator:
+  interval: 1s
+  max-items: 3
+  max-quantity: 5
+  min-unit-price: 1
+  max-unit-price: 300

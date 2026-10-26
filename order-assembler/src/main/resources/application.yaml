@@ -1,0 +1,16 @@
+spring:
+  application:
+    name: order-assembler
+  kafka:
+    bootstrap-servers: localhost:9092
+    streams:
+      application-id: order-assembler
+      properties:
+        processing.guarantee: exactly_once_v2
+        commit.interval.ms: 1000
+
+order-assembler:
+  topics:
+    orders: app.public.orders
+    order-items: app.public.order_items
+    order-events: order_events
