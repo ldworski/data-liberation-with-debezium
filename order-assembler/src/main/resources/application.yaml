@@ -9,6 +9,7 @@ spring:
         processing.guarantee: exactly_once_v2
         commit.interval.ms: 1000
         ensure.explicit.internal.resource.naming: true
+        topology.optimization: all
 
 order-assembler:
   topics:

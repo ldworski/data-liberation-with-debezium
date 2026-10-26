@@ -128,8 +128,10 @@ docker compose exec postgres psql -U app -d app \
 | `app.public.order_items` | Debezium        | `{"id": …}`            | Debezium change event for `order_items` |
 | `order_events`           | order-assembler | order number (string)  | Complete order with items              |
 
-Debezium topic names follow `<topic.prefix>.<schema>.<table>`. Kafka Streams also creates its own internal
-`order-assembler-*-repartition` and `order-assembler-*-changelog` topics.
+Debezium topic names follow `<topic.prefix>.<schema>.<table>`. Kafka Streams also creates two internal topics:
+`order-assembler-order-items-by-order-number-repartition` and `order-assembler-order-items-by-order-number-changelog`.
+With `topology.optimization: all` the `orders` and `order_items` tables use their source topics as changelogs, so
+they need no changelog topics of their own.
 
 ### Debezium change event
 
@@ -180,25 +182,24 @@ flowchart TB
     O[["app.public.orders<br/>key: {order_number}"]]
     I[["app.public.order_items<br/>key: {id}"]]
 
-    O --> OM["map: key → order_number<br/>value → after"]
-    OM --> OT[("KTable orders<br/>by order_number")]
-
-    I --> IM["map: key → id<br/>value → after"]
-    IM --> IT[("KTable order-items<br/>by item id")]
-    IT --> G["groupBy order_number<br/>aggregate into item list"]
+    O --> OT[("KTable orders<br/>by {order_number}, value → after")]
+    I --> IT[("KTable order-items<br/>by {id}, value → after")]
+    IT --> G["groupBy {order_number}<br/>aggregate into item list"]
     G --> GT[("KTable order-items-by-order-number")]
 
     OT --> J{{"KTable–KTable join"}}
     GT --> J
-    J --> E[["order_events<br/>key: order_number"]]
+    J --> K["selectKey: order_number"]
+    K --> E[["order_events<br/>key: order_number"]]
 ```
 
-1. Each Debezium topic is read as a stream; only the `after` state of the row is kept, so deletes and tombstones
-   become `null` and remove the row from the table.
-2. Items are re-grouped by `order_number` into a list. The aggregate adds, replaces and removes items as they are
-   inserted, updated or deleted.
-3. The orders table is joined with the item lists. Both sides are re-keyed by `order_number` first, so they are
-   co-partitioned.
+1. Each Debezium topic is read directly as a table, keeping the Debezium key. `mapValues` keeps only the `after`
+   state of the row, so deletes and tombstones become `null` and remove the row from the table.
+2. Items are re-grouped by `{order_number}` into a list. This is the only repartition in the topology. The
+   aggregate adds, replaces and removes items as they are inserted, updated or deleted.
+3. The orders table is joined with the item lists. The orders side keeps Debezium's partitioning, and the item
+   lists are repartitioned with the same key bytes (`{"order_number":"…"}`), so both sides are co-partitioned.
+4. The join result is re-keyed to the plain order number before it is written to `order_events`.
 
 This is a table–table join, so it needs no window: the latest state of every order and item list is kept in a
 state store, and a change on either side, however late, re-emits the updated order.
@@ -209,8 +210,14 @@ state store, and a change on either side, however late, re-emits the updated ord
   first be emitted with only some of its items. The Kafka Streams record cache hides some of these, but not all.
   For strict completeness, Debezium transaction metadata (`provide.transaction.metadata`) can be used to emit an
   order only once its whole transaction is assembled.
-- **State.** The local state lives in RocksDB under `/tmp/kafka-streams/order-assembler` and is backed by
-  changelog topics in Kafka, from which it is rebuilt if the local directory is lost.
+- **State.** The local state lives in RocksDB under `/tmp/kafka-streams/order-assembler`. If the local directory
+  is lost, it is rebuilt from the source topics and the `order-items-by-order-number` changelog topic.
+- **Key format.** The join relies on Jackson serializing `OrderKey` to exactly the same bytes as Debezium's key
+  (`key.converter.schemas.enable: false` in `docker/debezium/postgres-connector.json`) and on both source topics
+  having the same number of partitions. Changing the key converter, enabling key schemas or repartitioning one
+  of the topics silently breaks the join.
+- **Topology changes.** Changing internal topics or state stores makes the existing state incompatible. Reset the
+  application (`kafka-streams-application-reset`) or follow [Resetting](#resetting) before deploying such a change.
 - **Topics are not created by the app.** They come from `docker/kafka/create-topics.sh`; run it first when using a
   different Kafka cluster, otherwise Kafka Streams cannot find its source topics.
 
