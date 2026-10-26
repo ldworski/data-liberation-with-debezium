@@ -6,6 +6,7 @@ import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.TestOutputTopic;
+import org.apache.kafka.streams.TopologyConfig;
 import org.apache.kafka.streams.TopologyTestDriver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,11 +42,12 @@ class OrderEventsTopologyTest {
 
     @BeforeEach
     void setUp() {
-        var builder = new StreamsBuilder();
-        new OrderEventsTopology(TOPICS, jsonMapper).buildOn(builder);
         var properties = new Properties();
         properties.put(StreamsConfig.APPLICATION_ID_CONFIG, "order-assembler-test");
         properties.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:9092");
+        properties.put(StreamsConfig.ENSURE_EXPLICIT_INTERNAL_RESOURCE_NAMING_CONFIG, true);
+        var builder = new StreamsBuilder(new TopologyConfig(new StreamsConfig(properties)));
+        new OrderEventsTopology(TOPICS, jsonMapper).buildOn(builder);
         driver = new TopologyTestDriver(builder.build(), properties);
         orders = driver.createInputTopic(TOPICS.orders(), new StringSerializer(), new StringSerializer());
         orderItems = driver.createInputTopic(TOPICS.orderItems(), new StringSerializer(), new StringSerializer());
