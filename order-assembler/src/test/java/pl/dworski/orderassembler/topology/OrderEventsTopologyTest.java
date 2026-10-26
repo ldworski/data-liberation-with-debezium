@@ -11,9 +11,9 @@ import org.apache.kafka.streams.TopologyTestDriver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.kafka.support.serializer.JacksonJsonDeserializer;
 import pl.dworski.orderassembler.config.OrderAssemblerProperties.Topics;
 import pl.dworski.orderassembler.event.OrderEvent;
-import pl.dworski.orderassembler.serde.JsonSerde;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.math.BigDecimal;
@@ -52,7 +52,7 @@ class OrderEventsTopologyTest {
         orders = driver.createInputTopic(TOPICS.orders(), new StringSerializer(), new StringSerializer());
         orderItems = driver.createInputTopic(TOPICS.orderItems(), new StringSerializer(), new StringSerializer());
         orderEvents = driver.createOutputTopic(TOPICS.orderEvents(),
-                Serdes.UUID().deserializer(), JsonSerde.of(jsonMapper, OrderEvent.class).deserializer());
+                Serdes.UUID().deserializer(), new JacksonJsonDeserializer<>(OrderEvent.class, jsonMapper, false));
     }
 
     @AfterEach

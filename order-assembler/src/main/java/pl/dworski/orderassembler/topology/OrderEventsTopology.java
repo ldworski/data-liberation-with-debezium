@@ -20,7 +20,8 @@ import pl.dworski.orderassembler.debezium.OrderItemRow;
 import pl.dworski.orderassembler.debezium.OrderKey;
 import pl.dworski.orderassembler.debezium.OrderRow;
 import pl.dworski.orderassembler.event.OrderEvent;
-import pl.dworski.orderassembler.serde.JsonSerde;
+import org.springframework.kafka.support.serializer.JacksonJsonSerde;
+import tools.jackson.databind.JavaType;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.util.UUID;
@@ -40,14 +41,22 @@ public class OrderEventsTopology {
 
     public OrderEventsTopology(Topics topics, JsonMapper jsonMapper) {
         this.topics = topics;
-        this.orderKeySerde = JsonSerde.of(jsonMapper, OrderKey.class);
-        this.orderChangeSerde = JsonSerde.changeEventOf(jsonMapper, OrderRow.class);
-        this.orderRowSerde = JsonSerde.of(jsonMapper, OrderRow.class);
-        this.orderItemKeySerde = JsonSerde.of(jsonMapper, OrderItemKey.class);
-        this.orderItemChangeSerde = JsonSerde.changeEventOf(jsonMapper, OrderItemRow.class);
-        this.orderItemRowSerde = JsonSerde.of(jsonMapper, OrderItemRow.class);
-        this.orderItemsSerde = JsonSerde.of(jsonMapper, OrderItems.class);
-        this.orderEventSerde = JsonSerde.of(jsonMapper, OrderEvent.class);
+        this.orderKeySerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderKey.class));
+        this.orderChangeSerde = jsonSerde(jsonMapper, changeEventType(jsonMapper, OrderRow.class));
+        this.orderRowSerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderRow.class));
+        this.orderItemKeySerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderItemKey.class));
+        this.orderItemChangeSerde = jsonSerde(jsonMapper, changeEventType(jsonMapper, OrderItemRow.class));
+        this.orderItemRowSerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderItemRow.class));
+        this.orderItemsSerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderItems.class));
+        this.orderEventSerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderEvent.class));
+    }
+
+    private static <T> Serde<T> jsonSerde(JsonMapper jsonMapper, JavaType type) {
+        return new JacksonJsonSerde<T>(type, jsonMapper).noTypeInfo().ignoreTypeHeaders();
+    }
+
+    private static JavaType changeEventType(JsonMapper jsonMapper, Class<?> rowType) {
+        return jsonMapper.getTypeFactory().constructParametricType(ChangeEvent.class, rowType);
     }
 
     public KStream<UUID, OrderEvent> buildOn(StreamsBuilder builder) {
