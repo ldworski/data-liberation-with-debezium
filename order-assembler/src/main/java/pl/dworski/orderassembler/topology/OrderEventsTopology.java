@@ -32,7 +32,6 @@ public class OrderEventsTopology {
     private final Serde<UUID> uuidSerde = Serdes.UUID();
     private final Serde<OrderKey> orderKeySerde;
     private final Serde<ChangeEvent<OrderRow>> orderChangeSerde;
-    private final Serde<OrderRow> orderRowSerde;
     private final Serde<OrderItemKey> orderItemKeySerde;
     private final Serde<ChangeEvent<OrderItemRow>> orderItemChangeSerde;
     private final Serde<OrderItemRow> orderItemRowSerde;
@@ -43,7 +42,6 @@ public class OrderEventsTopology {
         this.topics = topics;
         this.orderKeySerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderKey.class));
         this.orderChangeSerde = jsonSerde(jsonMapper, changeEventType(jsonMapper, OrderRow.class));
-        this.orderRowSerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderRow.class));
         this.orderItemKeySerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderItemKey.class));
         this.orderItemChangeSerde = jsonSerde(jsonMapper, changeEventType(jsonMapper, OrderItemRow.class));
         this.orderItemRowSerde = jsonSerde(jsonMapper, jsonMapper.constructType(OrderItemRow.class));
@@ -60,27 +58,28 @@ public class OrderEventsTopology {
     }
 
     public KStream<UUID, OrderEvent> buildOn(StreamsBuilder builder) {
-        KTable<UUID, OrderRow> orders = builder
-                .stream(topics.orders(), Consumed.with(orderKeySerde, orderChangeSerde))
-                .map((key, change) -> KeyValue.pair(key.orderNumber(), afterOf(change)))
-                .toTable(Named.as("orders-table"), materialized("orders", orderRowSerde));
+        KTable<OrderKey, OrderRow> orders = builder
+                .table(topics.orders(), Consumed.with(orderKeySerde, orderChangeSerde),
+                        materialized("orders-source", orderKeySerde, orderChangeSerde))
+                .mapValues(OrderEventsTopology::afterOf, Named.as("orders-after"));
 
-        KTable<UUID, OrderItemRow> orderItems = builder
-                .stream(topics.orderItems(), Consumed.with(orderItemKeySerde, orderItemChangeSerde))
-                .map((key, change) -> KeyValue.pair(key.id(), afterOf(change)))
-                .toTable(Named.as("order-items-table"), materialized("order-items", orderItemRowSerde));
+        KTable<OrderItemKey, OrderItemRow> orderItems = builder
+                .table(topics.orderItems(), Consumed.with(orderItemKeySerde, orderItemChangeSerde),
+                        materialized("order-items-source", orderItemKeySerde, orderItemChangeSerde))
+                .mapValues(OrderEventsTopology::afterOf, Named.as("order-items-after"));
 
-        KTable<UUID, OrderItems> itemsByOrder = orderItems
-                .groupBy((_, item) -> KeyValue.pair(item.orderNumber(), item),
-                        Grouped.with("order-items-by-order-number", uuidSerde, orderItemRowSerde))
+        KTable<OrderKey, OrderItems> itemsByOrder = orderItems
+                .groupBy((_, item) -> KeyValue.pair(new OrderKey(item.orderNumber()), item),
+                        Grouped.with("order-items-by-order-number", orderKeySerde, orderItemRowSerde))
                 .aggregate(OrderItems::empty,
                         (_, item, items) -> items.with(item),
                         (_, item, items) -> items.without(item),
-                        materialized("order-items-by-order-number", orderItemsSerde));
+                        materialized("order-items-by-order-number", orderKeySerde, orderItemsSerde));
 
         KStream<UUID, OrderEvent> orderEvents = orders
                 .join(itemsByOrder, OrderEventsTopology::toOrderEvent)
-                .toStream();
+                .toStream()
+                .selectKey((key, _) -> key.orderNumber(), Named.as("order-events-by-uuid"));
         orderEvents.to(topics.orderEvents(), Produced.with(uuidSerde, orderEventSerde));
         return orderEvents;
     }
@@ -89,9 +88,10 @@ public class OrderEventsTopology {
         return change == null ? null : change.after();
     }
 
-    private <V> Materialized<UUID, V, KeyValueStore<Bytes, byte[]>> materialized(String storeName, Serde<V> valueSerde) {
-        return Materialized.<UUID, V, KeyValueStore<Bytes, byte[]>>as(storeName)
-                .withKeySerde(uuidSerde)
+    private static <K, V> Materialized<K, V, KeyValueStore<Bytes, byte[]>> materialized(
+            String storeName, Serde<K> keySerde, Serde<V> valueSerde) {
+        return Materialized.<K, V, KeyValueStore<Bytes, byte[]>>as(storeName)
+                .withKeySerde(keySerde)
                 .withValueSerde(valueSerde);
     }
 

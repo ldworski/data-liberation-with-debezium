@@ -6,7 +6,9 @@ import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
 import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.TestOutputTopic;
+import org.apache.kafka.streams.Topology;
 import org.apache.kafka.streams.TopologyConfig;
+import org.apache.kafka.streams.TopologyDescription;
 import org.apache.kafka.streams.TopologyTestDriver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -35,6 +37,7 @@ class OrderEventsTopologyTest {
 
     private final JsonMapper jsonMapper = JsonMapper.builder().build();
 
+    private Topology topology;
     private TopologyTestDriver driver;
     private TestInputTopic<String, String> orders;
     private TestInputTopic<String, String> orderItems;
@@ -46,9 +49,11 @@ class OrderEventsTopologyTest {
         properties.put(StreamsConfig.APPLICATION_ID_CONFIG, "order-assembler-test");
         properties.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, "dummy:9092");
         properties.put(StreamsConfig.ENSURE_EXPLICIT_INTERNAL_RESOURCE_NAMING_CONFIG, true);
+        properties.put(StreamsConfig.TOPOLOGY_OPTIMIZATION_CONFIG, StreamsConfig.OPTIMIZE);
         var builder = new StreamsBuilder(new TopologyConfig(new StreamsConfig(properties)));
         new OrderEventsTopology(TOPICS, jsonMapper).buildOn(builder);
-        driver = new TopologyTestDriver(builder.build(), properties);
+        topology = builder.build(properties);
+        driver = new TopologyTestDriver(topology, properties);
         orders = driver.createInputTopic(TOPICS.orders(), new StringSerializer(), new StringSerializer());
         orderItems = driver.createInputTopic(TOPICS.orderItems(), new StringSerializer(), new StringSerializer());
         orderEvents = driver.createOutputTopic(TOPICS.orderEvents(),
@@ -119,6 +124,15 @@ class OrderEventsTopologyTest {
 
         //then
         assertThat(orderEvents.readKeyValuesToMap()).containsEntry(ORDER_NUMBER, null);
+    }
+
+    @Test
+    void repartitionsOnlyItemsByOrderNumber() {
+        assertThat(topology.describe().subtopologies().stream()
+                .flatMap(subtopology -> subtopology.nodes().stream())
+                .filter(TopologyDescription.Sink.class::isInstance)
+                .map(node -> ((TopologyDescription.Sink) node).topic()))
+                .containsExactlyInAnyOrder("order-items-by-order-number-repartition", TOPICS.orderEvents());
     }
 
     private static String orderKey() {
