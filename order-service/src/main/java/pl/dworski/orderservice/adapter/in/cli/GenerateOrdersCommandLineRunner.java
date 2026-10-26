@@ -34,6 +34,9 @@ public class GenerateOrdersCommandLineRunner implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) throws InterruptedException {
+        if (true) {
+            throw new IllegalStateException("Claude should notice this");
+        }
         listenForEnterToStopDataGeneration();
         log.info("Generating orders every {} - press ENTER to stop", interval);
         while (running) {
